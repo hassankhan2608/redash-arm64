@@ -8,7 +8,7 @@
   # Clone official Redash repo (you can change branch/tag here)
   RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 
-  RUN git clone --depth 1 --branch main https://github.com/getredash/redash.git .
+  RUN git clone --depth 1 --branch master https://github.com/getredash/redash.git .
 
   WORKDIR /app/client
 
@@ -31,7 +31,7 @@
   WORKDIR /app
 
   # Clone Redash again here for backend
-  RUN git clone --depth 1 --branch main https://github.com/getredash/redash.git .
+  RUN git clone --depth 1 --branch master https://github.com/getredash/redash.git .
 
   RUN pip install --no-cache-dir -r requirements.txt
 
