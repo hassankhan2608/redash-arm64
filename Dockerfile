@@ -33,7 +33,7 @@
   # Clone Redash again here for backend
   RUN git clone --depth 1 --branch master https://github.com/getredash/redash.git .
 
-  RUN pip install --no-cache-dir -r requirements.txt
+  RUN pip install --no-cache-dir -r requirements/prod.txt
 
   # --- Stage 3: Final runtime image ---
   FROM python:3.9-slim-buster
