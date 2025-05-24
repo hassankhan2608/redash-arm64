@@ -1,66 +1,60 @@
-# --------- Base build stage for frontend ---------
+# Use multi-stage build
+
+# --- Stage 1: Clone Redash and build frontend ---
   FROM node:18-bullseye-slim AS frontend-build
 
   WORKDIR /app
 
-  # Install build essentials and yarn
-  RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    build-essential \
-    git \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+  # Clone official Redash repo (you can change branch/tag here)
+  RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 
-  RUN npm install -g yarn@1.22.10
+  RUN git clone --depth 1 --branch main https://github.com/getredash/redash.git .
 
-  # Copy only frontend files
-  COPY client /app
+  WORKDIR /app/client
 
-  # Install and build frontend
   RUN yarn install --frozen-lockfile
+
   RUN yarn build
 
 
-  # --------- Python backend build stage ---------
-  FROM python:3.9-slim AS backend-build
+  # --- Stage 2: Backend build ---
+  FROM python:3.9-slim-buster AS backend-build
+
+  RUN apt-get update && apt-get install -y \
+      build-essential \
+      libffi-dev \
+      libssl-dev \
+      libpq-dev \
+      git \
+      && rm -rf /var/lib/apt/lists/*
 
   WORKDIR /app
 
-  # Install build dependencies
-  RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libpq-dev \
-    curl \
-    git \
-    && rm -rf /var/lib/apt/lists/*
+  # Clone Redash again here for backend
+  RUN git clone --depth 1 --branch main https://github.com/getredash/redash.git .
 
-  # Install Python dependencies
-  COPY requirements.txt requirements_dev.txt ./
-  RUN pip install --no-cache-dir -r requirements.txt -r requirements_dev.txt
+  RUN pip install --no-cache-dir -r requirements.txt
 
-  # Copy backend files
-  COPY . .
+  # --- Stage 3: Final runtime image ---
+  FROM python:3.9-slim-buster
 
-  # --------- Final runtime stage ---------
-  FROM python:3.9-slim
+  RUN apt-get update && apt-get install -y \
+      libpq-dev \
+      curl \
+      && rm -rf /var/lib/apt/lists/*
 
   WORKDIR /app
 
-  # Install runtime dependencies
-  RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-  # Copy installed dependencies and app from builder
-  COPY --from=backend-build /usr/local /usr/local
+  # Copy backend files from backend-build stage
   COPY --from=backend-build /app /app
 
-  # Copy pre-built frontend assets
-  COPY --from=frontend-build /app/dist /app/client/dist
+  # Copy frontend build from frontend-build stage to client/build folder
+  COPY --from=frontend-build /app/client/build /app/client/build
 
-  # Set environment variables
-  ENV PYTHONUNBUFFERED=1
+  ENV PYTHONPATH=/app
+  ENV REDASH_LOG_LEVEL=INFO
+  ENV REDASH_WORKERS_COUNT=4
 
-  # Default command is overridden in docker-compose.yml via `command`
-  CMD ["gunicorn", "-b", "0.0.0.0:5000", "redash.wsgi:app"]
+  EXPOSE 5000
+
+  CMD ["./bin/run-server"]
