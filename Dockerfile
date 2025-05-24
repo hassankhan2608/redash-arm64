@@ -1,59 +1,66 @@
-# Stage 1: Build frontend assets
-FROM node:18-alpine as frontend-build
+# --------- Base build stage for frontend ---------
+  FROM node:18-bullseye-slim AS frontend-build
 
-WORKDIR /app
+  WORKDIR /app
 
-# Install dependencies for building frontend
-RUN apk add --no-cache git
-
-# Clone Redash repo (pin to stable tag)
-RUN git clone --depth 1 https://github.com/getredash/redash.git .
-
-WORKDIR /app/redash
-
-# Install frontend deps and build
-RUN npm install --legacy-peer-deps
-RUN npm run build
-
-# Stage 2: Build backend image
-FROM python:3.10-slim-buster
-
-# Install system deps
-RUN apt-get update && apt-get install -y --no-install-recommends \
+  # Install build essentials and yarn
+  RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
     build-essential \
-    libffi-dev \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+  RUN npm install -g yarn@1.22.10
+
+  # Copy only frontend files
+  COPY client /app
+
+  # Install and build frontend
+  RUN yarn install --frozen-lockfile
+  RUN yarn build
+
+
+  # --------- Python backend build stage ---------
+  FROM python:3.9-slim AS backend-build
+
+  WORKDIR /app
+
+  # Install build dependencies
+  RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
     libpq-dev \
-    libssl-dev \
     curl \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# Create redash user
-RUN useradd -m redash
+  # Install Python dependencies
+  COPY requirements.txt requirements_dev.txt ./
+  RUN pip install --no-cache-dir -r requirements.txt -r requirements_dev.txt
 
-WORKDIR /app
+  # Copy backend files
+  COPY . .
 
-# Copy backend source code from frontend-build stage
-COPY --from=frontend-build /app/redash /app
+  # --------- Final runtime stage ---------
+  FROM python:3.9-slim
 
-# Copy built frontend assets
-COPY --from=frontend-build /app/redash/client/dist /app/client/dist
+  WORKDIR /app
 
-# Switch to redash user
-USER redash
+  # Install runtime dependencies
+  RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-# Upgrade pip and install python deps
-RUN pip install --upgrade pip
-RUN pip install -r requirements.txt
+  # Copy installed dependencies and app from builder
+  COPY --from=backend-build /usr/local /usr/local
+  COPY --from=backend-build /app /app
 
-# Expose default port
-EXPOSE 5000
+  # Copy pre-built frontend assets
+  COPY --from=frontend-build /app/dist /app/client/dist
 
-# Copy entrypoint script
-COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+  # Set environment variables
+  ENV PYTHONUNBUFFERED=1
 
-ENTRYPOINT ["docker-entrypoint.sh"]
-
-# Default to server
-CMD ["server"]
+  # Default command is overridden in docker-compose.yml via `command`
+  CMD ["gunicorn", "-b", "0.0.0.0:5000", "redash.wsgi:app"]
